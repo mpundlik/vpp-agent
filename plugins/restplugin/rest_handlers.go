@@ -284,8 +284,11 @@ func (plugin *RESTAPIPlugin) showCommandHandler(formatter *render.Render) http.H
 				plugin.Deps.Log.WithField("VPPCLI response", reply.Reply).Info("VPPCLI response")
 				plugin.Deps.Log.WithField("VPPCLI response", string(reply.Reply)).Info("VPPCLI response")
 
-				plugin.Deps.Log.Infof("VPPCLI response start \n %v \nVPPCLI response end", reply.Reply)
-				plugin.Deps.Log.Infof("VPPCLI response start \n %v \nVPPCLI response end", string(reply.Reply))
+				plugin.Deps.Log.Infof("VPPCLI response start \n %v \n VPPCLI response end", reply.Reply)
+				plugin.Deps.Log.Infof("VPPCLI response start \n %v \n VPPCLI response end", string(reply.Reply))
+
+				plugin.Deps.Log.Infof("VPPCLI response start %v VPPCLI response end", reply.Reply)
+				plugin.Deps.Log.Infof("VPPCLI response start %v VPPCLI response end", string(reply.Reply))
 
 				plugin.Deps.Log.Info("VPPCLI response start")
 				plugin.Deps.Log.Infof("%v", reply.Reply)
