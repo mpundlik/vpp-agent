@@ -96,6 +96,13 @@ vpp_term: Check Ping
     Should Contain     ${out}    from ${ip}
     Should Not Contain    ${out}    100% packet loss
 
+vpp_term: Check Ping Within Interface
+    [Arguments]        ${node}    ${ip}    ${source}
+    Log Many           ${node}    ${ip}    ${source}
+    ${out}=            vpp_term: Issue Command    ${node}    ping ${ip} source ${source}    delay=10s
+    Should Contain     ${out}    from ${ip}
+    Should Not Contain    ${out}    100% packet loss
+
 vpp_term: Check Interface Presence
     [Arguments]        ${node}     ${mac}    ${status}=${TRUE}
     [Documentation]    Checking if specified interface with mac exists in VPP
@@ -103,7 +110,7 @@ vpp_term: Check Interface Presence
     ${ints}=           vpp_term: Show Hardware    ${node}
     ${result}=         Run Keyword And Return Status    Should Contain    ${ints}    ${mac}
     Should Be Equal    ${result}    ${status}
-    
+
 vpp_term: Interface Is Created
     [Arguments]    ${node}    ${mac}
     Log Many       ${node}    ${mac}
@@ -118,7 +125,7 @@ vpp_term: Interface Exists
     [Arguments]    ${node}    ${mac}
     Log Many       ${node}    ${mac}
     vpp_term: Check Interface Presence    ${node}    ${mac}
-    
+
 vpp_term: Interface Not Exists
     [Arguments]    ${node}    ${mac}
     Log Many       ${node}    ${mac}
@@ -138,7 +145,7 @@ vpp_term: Check Interface UpDown Status
     Should Be Equal As Integers    ${enabled}    ${status}
 
 vpp_term: Get Interface IPs
-    [Arguments]          ${node}     ${interface} 
+    [Arguments]          ${node}     ${interface}
     Log Many             ${node}     ${interface}
     ${int_addr}=         vpp_term: Show Interfaces Address    ${node}    ${interface}
     Log                  ${int_addr}
@@ -185,6 +192,7 @@ vpp_term: Show Memif
 vpp_term: Check TAP Interface State
     [Arguments]          ${node}    ${name}    @{desired_state}
     Log Many             ${node}    ${name}    @{desired_state}
+    Sleep                 10s    Time to let etcd to get state of newly setup tap interface.
     ${internal_name}=    vpp_ctl: Get Interface Internal Name    ${node}    ${name}
     Log                  ${internal_name}
     ${interface}=        vpp_term: Show Interfaces    ${node}    ${internal_name}
@@ -202,3 +210,23 @@ vpp_term: Check TAP Interface State
     Log List             ${actual_state}
     List Should Contain Sub List    ${actual_state}    ${desired_state}
     [Return]             ${actual_state}
+
+vpp_term: Show ACL
+    [Arguments]        ${node}
+    [Documentation]    Show ACLs through vpp terminal
+    Log Many           ${node}
+    ${out}=            vpp_term: Issue Command  ${node}   sh acl-plugin acl
+    [Return]           ${out}
+
+vpp_term: Add Route
+    [Arguments]    ${node}    ${destination_ip}    ${prefix}    ${next_hop_ip}
+    [Documentation]    Add ip route through vpp terminal.
+    Log Many    ${node}    ${destination_ip}    ${prefix}    ${next_hop_ip}
+    vpp_term: Issue Command    ${node}    ip route add ${destination_ip}/${prefix} via ${next_hop_ip}
+
+vpp_term: Show ARP
+    [Arguments]        ${node}
+    [Documentation]    Show ARPs through vpp terminal
+    Log Many           ${node}
+    ${out}=            vpp_term: Issue Command  ${node}   sh ip arp
+    [Return]           ${out}

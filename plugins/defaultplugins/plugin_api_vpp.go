@@ -20,6 +20,7 @@ import (
 	"github.com/ligato/vpp-agent/idxvpp"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/ifplugin/ifaceidx"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/l2plugin/bdidx"
+	"github.com/ligato/vpp-agent/plugins/defaultplugins/aclplugin/model/acl"
 )
 
 // API of VPP Plugin
@@ -31,7 +32,7 @@ type API interface {
 	// GetSwIfIndexes gives access to mapping of logical names (used in ETCD configuration) to sw_if_index.
 	// This mapping is helpful if other plugins need to configure VPP by the Binary API that uses sw_if_index input.
 	//
-	// Example of is_sw_index lookup by logical name of the port "vswitch_ingres" of the network interface
+	// Example of is_sw_index lookup by logical name of the port "vswitch_ingres" of the network interface:
 	//
 	//   func Init() error {
 	//      swIfIndexes := defaultplugins.GetSwIfIndexes()
@@ -46,16 +47,16 @@ type API interface {
 
 	// GetBfdAuthKeyIndexes gives access to mapping of logical names (used in ETCD configuration) to bfd_auth_keys.
 	// The authentication key has its own unique ID - the value is as a string stored in the mapping. Unique index is generated
-	// uint32 number
+	// uint32 number.
 	GetBfdAuthKeyIndexes() idxvpp.NameToIdx
 
 	// GetBfdEchoFunctionIndexes gives access to mapping of logical names (used in ETCD configuration) to bfd_echo_function
 	// The echo function uses the interface name as an unique ID - this value is as a string stored in the mapping. The index
-	// is generated uint32 number
+	// is generated uint32 number.
 	GetBfdEchoFunctionIndexes() idxvpp.NameToIdx
 
 	// GetBDIndexes gives access to mapping of logical names (used in ETCD configuration) as bd_indexes. The mapping consists
-	// from the unique Bridge domain name and the bridge domain ID
+	// from the unique Bridge domain name and the bridge domain ID.
 	GetBDIndexes() bdidx.BDIndex
 
 	// GetFIBIndexes gives access to mapping of logical names (used in ETCD configuration) as fib_indexes. The FIB's physical
@@ -71,4 +72,7 @@ type API interface {
 	// uses the name and the index of receive interface (the one all packets are received on). XConnectMeta is a container
 	// for the transmit interface name.
 	GetXConnectIndexes() idxvpp.NameToIdx
+
+	// DumpACL returns a list of all configured ACLs todo currently just a mock for snk. always returns empty list
+	DumpACL() (acls []*acl.AccessLists_Acl, err error)
 }

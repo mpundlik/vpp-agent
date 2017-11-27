@@ -39,6 +39,8 @@ import (
 	"github.com/ligato/vpp-agent/plugins/govppmux"
 	ifaceLinux "github.com/ligato/vpp-agent/plugins/linuxplugin/ifplugin/ifaceidx"
 	"github.com/namsral/flag"
+	"github.com/ligato/vpp-agent/plugins/defaultplugins/l3plugin/l3idx"
+	"github.com/ligato/vpp-agent/plugins/defaultplugins/aclplugin/model/acl"
 )
 
 // defaultpluigns specific flags
@@ -47,15 +49,13 @@ var (
 	skipResyncFlag = flag.Bool("skip-vpp-resync", false, "Skip defaultplugins resync with VPP")
 )
 
-// no operation writer that helps avoiding NIL pointer based segmentation fault
-// used as default if some dependency was not injected
 var (
-	// no operation writer that helps avoiding NIL pointer based segmentation fault
-	// used as default if some dependency was not injected
+	// noopWriter (no operation writer) helps avoiding NIL pointer based segmentation fault.
+	// It is used as default if some dependency was not injected.
 	noopWriter = &datasync.CompositeKVProtoWriter{Adapters: []datasync.KeyProtoValWriter{}}
 
-	// no operation watcher that helps avoiding NIL pointer based segmentation fault
-	// used as default if some dependency was not injected
+	// noopWatcher (no operation watcher) helps avoiding NIL pointer based segmentation fault.
+	// It is used as default if some dependency was not injected.
 	noopWatcher = &datasync.CompositeKVProtoWatcher{Adapters: []datasync.KeyValProtoWatcher{}}
 )
 
@@ -72,10 +72,10 @@ const (
 )
 
 // Default MTU value. Mtu can be set via defaultplugins config or directly with interface json (higher priority). If none
-// is set, use default
+// is set, use default.
 const defaultMtu = 9000
 
-// Plugin implements Plugin interface, therefore it can be loaded with other plugins
+// Plugin implements Plugin interface, therefore it can be loaded with other plugins.
 type Plugin struct {
 	Deps
 
@@ -94,6 +94,9 @@ type Plugin struct {
 	ifStateNotifications messaging.ProtoPublisher
 	ifIdxWatchCh         chan ifaceidx.SwIfIdxDto
 	linuxIfIdxWatchCh    chan ifaceLinux.LinuxIfIndexDto
+	stnConfigurator      *ifplugin.StnConfigurator
+	stnAllIndexes        idxvpp.NameToIdxRW
+	stnUnstoredIndexes   idxvpp.NameToIdxRW
 
 	// Bridge domain fields
 	bdConfigurator    *l2plugin.BDConfigurator
@@ -122,11 +125,11 @@ type Plugin struct {
 
 	// L3 route fields
 	routeConfigurator *l3plugin.RouteConfigurator
-	routeIndexes      idxvpp.NameToIdxRW
+	routeIndexes      l3idx.RouteIndexRW
 
 	// L3 arp fields
 	arpConfigurator *l3plugin.ArpConfigurator
-	arpIndexes      idxvpp.NameToIdxRW
+	arpIndexes      l3idx.ARPIndexRW
 
 	// L4 fields
 	l4Configurator      *l4plugin.L4Configurator
@@ -156,8 +159,8 @@ type Plugin struct {
 	wg              sync.WaitGroup     // wait group that allows to wait until all goroutines of the plugin have finished
 }
 
-// Deps is here to group injected dependencies of plugin
-// to not mix with other plugin fields.
+// Deps groups injected dependencies of plugin so that they do not mix with
+// other plugin fieldsMtu.
 type Deps struct {
 	// inject all below
 	local.PluginInfraDeps
@@ -176,7 +179,7 @@ type linuxpluginAPI interface {
 	GetLinuxIfIndexes() ifaceLinux.LinuxIfIndex
 }
 
-// DPConfig holds the defaultpluigns configuration
+// DPConfig holds the defaultpluigns configuration.
 type DPConfig struct {
 	Mtu       uint32 `json:"mtu"`
 	Stopwatch bool   `json:"stopwatch"`
@@ -225,7 +228,12 @@ func (plugin *Plugin) GetXConnectIndexes() idxvpp.NameToIdx {
 	return plugin.xcIndexes
 }
 
-// Init gets handlers for ETCD, Messaging and delegates them to ifConfigurator & ifStateUpdater
+// DumpACL returns a list of all configured ACL entires
+func (plugin *Plugin) DumpACL() (acls []*acl.AccessLists_Acl, err error) {
+	return plugin.aclConfigurator.DumpACL()
+}
+
+// Init gets handlers for ETCD and Messaging and delegates them to ifConfigurator & ifStateUpdater.
 func (plugin *Plugin) Init() error {
 	plugin.Log.Debug("Initializing interface plugin")
 	// handle flag
@@ -248,17 +256,19 @@ func (plugin *Plugin) Init() error {
 		} else {
 			plugin.Log.Infof("stopwatch disabled for %v", plugin.PluginName)
 		}
+		// return skip (if set) or value from config
 		plugin.resyncStrategy = plugin.resolveResyncStrategy(config.Strategy)
 		plugin.Log.Infof("VPP resync strategy is set to %v", plugin.resyncStrategy)
 	} else {
 		plugin.ifMtu = defaultMtu
 		plugin.Log.Infof("MTU set to default value %v", plugin.ifMtu)
 		plugin.Log.Infof("stopwatch disabled for %v", plugin.PluginName)
-		plugin.resyncStrategy = fullResync
+		// return skip (if set) or full
+		plugin.resyncStrategy = plugin.resolveResyncStrategy(fullResync)
 		plugin.Log.Infof("VPP resync strategy config not found, set to %v", plugin.resyncStrategy)
 	}
 
-	// all channels that are used inside of publishIfStateEvents or watchEvents must be created in advance!
+	// All channels that are used inside of publishIfStateEvents or watchEvents must be created in advance!
 	plugin.ifStateChan = make(chan *intf.InterfaceStateNotification, 100)
 	plugin.bdStateChan = make(chan *l2plugin.BridgeDomainStateNotification, 100)
 	plugin.resyncConfigChan = make(chan datasync.ResyncEvent)
@@ -269,18 +279,18 @@ func (plugin *Plugin) Init() error {
 	plugin.linuxIfIdxWatchCh = make(chan ifaceLinux.LinuxIfIndexDto, 100)
 	plugin.errorChannel = make(chan ErrCtx, 100)
 
-	// create plugin context, save cancel function into the plugin handle
+	// Create plugin context, save cancel function into the plugin handle.
 	var ctx context.Context
 	ctx, plugin.cancel = context.WithCancel(context.Background())
 
-	//FIXME run following go routines later than following init*() calls - just before Watch()
+	//FIXME Run the following go routines later than following init*() calls - just before Watch().
 
-	// run event handler go routines
+	// Run event handler go routines.
 	go plugin.publishIfStateEvents(ctx)
 	go plugin.publishBdStateEvents(ctx)
 	go plugin.watchEvents(ctx)
 
-	// run error handler
+	// Run error handler.
 	go plugin.changePropagateError()
 
 	err = plugin.initIF(ctx)
@@ -317,6 +327,8 @@ func (plugin *Plugin) Init() error {
 	return nil
 }
 
+// Resolves resync strategy. Skip resync flag is also evaluated here and it has priority regardless
+// the resync strategy parameter.
 func (plugin *Plugin) resolveResyncStrategy(strategy string) string {
 	// first check skip resync flag
 	if *skipResyncFlag {
@@ -338,7 +350,7 @@ func (plugin *Plugin) resolveMtu(mtuFromCfg uint32) uint32 {
 	return mtuFromCfg
 }
 
-// fixNilPointers sets noopWriter & nooWatcher for nil dependencies
+// fixNilPointers sets noopWriter & nooWatcher for nil dependencies.
 func (plugin *Plugin) fixNilPointers() {
 	if plugin.Deps.Publish == nil {
 		plugin.Deps.Publish = noopWriter
@@ -363,11 +375,12 @@ func (plugin *Plugin) initIF(ctx context.Context) error {
 	ifLogger := plugin.Log.NewLogger("-if-conf")
 	ifStateLogger := plugin.Log.NewLogger("-if-state")
 	bfdLogger := plugin.Log.NewLogger("-bfd-conf")
+	stnLogger := plugin.Log.NewLogger("-stn-conf")
 	// Interface indexes
 	plugin.swIfIndexes = ifaceidx.NewSwIfIndex(nametoidx.NewNameToIdx(ifLogger, plugin.PluginName,
 		"sw_if_indexes", ifaceidx.IndexMetadata))
 
-	// get pointer to the map with Linux interface indexes
+	// Get pointer to the map with Linux interface indices.
 	if plugin.Linux != nil {
 		plugin.linuxIfIndexes = plugin.Linux.GetLinuxIfIndexes()
 	} else {
@@ -429,6 +442,27 @@ func (plugin *Plugin) initIF(ctx context.Context) error {
 
 	plugin.Log.Debug("bfdConfigurator Initialized")
 
+	if plugin.enableStopwatch {
+		stopwatch = measure.NewStopwatch("stnConfigurator", stnLogger)
+	}
+
+	plugin.stnAllIndexes = nametoidx.NewNameToIdx(stnLogger, plugin.PluginName, "stn-all-indexes", nil)
+	plugin.stnUnstoredIndexes = nametoidx.NewNameToIdx(stnLogger, plugin.PluginName, "stn-unstored-indexes", nil)
+
+	plugin.stnConfigurator = &ifplugin.StnConfigurator{
+		Log:                 bfdLogger,
+		GoVppmux:            plugin.GoVppmux,
+		SwIfIndexes:         plugin.swIfIndexes,
+		StnUnstoredIndexes:  plugin.stnUnstoredIndexes,
+		StnAllIndexes:       plugin.stnAllIndexes,
+		StnUnstoredIndexSeq: 1,
+		StnAllIndexSeq:      1,
+		Stopwatch:           stopwatch,
+	}
+	plugin.stnConfigurator.Init()
+
+	plugin.Log.Debug("stnConfigurator Initialized")
+
 	return nil
 }
 
@@ -469,14 +503,14 @@ func (plugin *Plugin) initL2(ctx context.Context) error {
 	bdStateLogger := plugin.Log.NewLogger("-l2-bd-state")
 	fibLogger := plugin.Log.NewLogger("-l2-fib-conf")
 	xcLogger := plugin.Log.NewLogger("-l2-xc-conf")
-	// Bridge domain indexes
+	// Bridge domain indices
 	plugin.bdIndexes = bdidx.NewBDIndex(nametoidx.NewNameToIdx(bdLogger, plugin.PluginName,
 		"bd_indexes", bdidx.IndexMetadata))
 
-	// Interface to bridge domain indexes - desired state
+	// Interface to bridge domain indices - desired state
 	plugin.ifToBdDesIndexes = nametoidx.NewNameToIdx(bdLogger, plugin.PluginName, "if_to_bd_des_indexes", nil)
 
-	// Interface to bridge domain indexes - current state
+	// Interface to bridge domain indices - current state
 
 	plugin.ifToBdRealIndexes = nametoidx.NewNameToIdx(bdLogger, plugin.PluginName, "if_to_bd_real_indexes", nil)
 
@@ -568,23 +602,32 @@ func (plugin *Plugin) initL2(ctx context.Context) error {
 
 func (plugin *Plugin) initL3(ctx context.Context) error {
 	routeLogger := plugin.Log.NewLogger("-l3-route-conf")
-	plugin.routeIndexes = nametoidx.NewNameToIdx(routeLogger, plugin.PluginName, "route_indexes", nil)
+	plugin.routeIndexes = l3idx.NewRouteIndex(
+		nametoidx.NewNameToIdx(routeLogger, plugin.PluginName, "route_indexes", nil))
+	routeCachedIndexes := l3idx.NewRouteIndex(
+		nametoidx.NewNameToIdx(plugin.Log, plugin.PluginName, "route_cached_indexes", nil))
 
 	var stopwatch *measure.Stopwatch
 	if plugin.enableStopwatch {
 		stopwatch = measure.NewStopwatch("RouteConfigurator", routeLogger)
 	}
 	plugin.routeConfigurator = &l3plugin.RouteConfigurator{
-		Log:           routeLogger,
-		GoVppmux:      plugin.GoVppmux,
-		RouteIndexes:  plugin.routeIndexes,
-		RouteIndexSeq: 1,
-		SwIfIndexes:   plugin.swIfIndexes,
-		Stopwatch:     stopwatch,
+		Log:              routeLogger,
+		GoVppmux:         plugin.GoVppmux,
+		RouteIndexes:     plugin.routeIndexes,
+		RouteIndexSeq:    1,
+		SwIfIndexes:      plugin.swIfIndexes,
+		RouteCachedIndex: routeCachedIndexes,
+		Stopwatch:        stopwatch,
 	}
 
 	arpLogger := plugin.Log.NewLogger("-l3-arp-conf")
-	plugin.arpIndexes = nametoidx.NewNameToIdx(arpLogger, plugin.PluginName, "arp_indexes", nil)
+	// ARP configuration indices
+	plugin.arpIndexes = l3idx.NewARPIndex(nametoidx.NewNameToIdx(arpLogger, plugin.PluginName, "arp_indexes", nil))
+	// ARP cache indices
+	arpCache := l3idx.NewARPIndex(nametoidx.NewNameToIdx(arpLogger, plugin.PluginName, "arp_cache", nil))
+	// ARP deleted indices
+	arpDeleted := l3idx.NewARPIndex(nametoidx.NewNameToIdx(arpLogger, plugin.PluginName, "arp_unnasigned", nil))
 
 	if plugin.enableStopwatch {
 		stopwatch = measure.NewStopwatch("ArpConfigurator", arpLogger)
@@ -592,8 +635,10 @@ func (plugin *Plugin) initL3(ctx context.Context) error {
 	plugin.arpConfigurator = &l3plugin.ArpConfigurator{
 		Log:         arpLogger,
 		GoVppmux:    plugin.GoVppmux,
-		ArpIndexes:  plugin.arpIndexes,
-		ArpIndexSeq: 1,
+		ARPIndexes:  plugin.arpIndexes,
+		ARPCache:    arpCache,
+		ARPDeleted:  arpDeleted,
+		ARPIndexSeq: 1,
 		SwIfIndexes: plugin.swIfIndexes,
 		Stopwatch:   stopwatch,
 	}
@@ -601,6 +646,7 @@ func (plugin *Plugin) initL3(ctx context.Context) error {
 	if err := plugin.routeConfigurator.Init(); err != nil {
 		return err
 	}
+
 	plugin.Log.Debug("routeConfigurator Initialized")
 
 	if err := plugin.arpConfigurator.Init(); err != nil {
@@ -664,7 +710,7 @@ func (plugin *Plugin) initErrorHandler() error {
 	return nil
 }
 
-// AfterInit delegates to ifStateUpdater
+// AfterInit delegates the call to ifStateUpdater.
 func (plugin *Plugin) AfterInit() error {
 	plugin.Log.Debug("vpp plugins AfterInit begin")
 
@@ -678,7 +724,7 @@ func (plugin *Plugin) AfterInit() error {
 	return nil
 }
 
-// Close cleans up the resources
+// Close cleans up the resources.
 func (plugin *Plugin) Close() error {
 	plugin.cancel()
 	plugin.wg.Wait()

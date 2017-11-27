@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // package vpp-agent-ctl implements the vpp-agent-ctl test tool for testing
-// of VPP Agent plugins. In addition to testing, the vpp-agent-ctl tool can
+// VPP Agent plugins. In addition to testing, the vpp-agent-ctl tool can
 // be used to demonstrate the usage of VPP Agent plugins and their APIs.
 package main
 
@@ -36,12 +36,12 @@ import (
 	"github.com/ligato/cn-infra/db/keyval/etcdv3"
 	"github.com/ligato/cn-infra/db/keyval/kvproto"
 	"github.com/ligato/cn-infra/logging"
-	"github.com/ligato/cn-infra/logging/logroot"
 	"github.com/ligato/cn-infra/logging/logrus"
 	"github.com/ligato/cn-infra/servicelabel"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/aclplugin/model/acl"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/ifplugin/model/bfd"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/ifplugin/model/interfaces"
+	"github.com/ligato/vpp-agent/plugins/defaultplugins/ifplugin/model/stn"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/l2plugin/model/l2"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/l3plugin/model/l3"
 	"github.com/ligato/vpp-agent/plugins/defaultplugins/l4plugin/model/l4"
@@ -55,7 +55,7 @@ var (
 )
 
 func main() {
-	log = logroot.StandardLogger()
+	log = logrus.DefaultLogger()
 	log.SetLevel(logging.InfoLevel)
 	flag.CommandLine.ParseEnv(os.Environ())
 
@@ -140,6 +140,10 @@ func main() {
 			addStaticFibTableEntry(db, bridgeDomain1, ifName1)
 		case "-dft":
 			deleteStaticFibTableEntry(db, bridgeDomain1)
+		case "-aae":
+			addArpEntry(db, ifName1)
+		case "-dae":
+			deleteArpEntry(db, ifName1)
 		case "-aat":
 			addArpTableEntry(db, bridgeDomain1)
 		case "-cxc":
@@ -198,6 +202,10 @@ func main() {
 			disableL4Features(db)
 		case "-dlrt":
 			delete(db, l32.StaticRouteKey("route1"))
+		case "-stna":
+			createStnRule(db, ifName1, "10.1.1.3/32")
+		case "-stnd":
+			delete(db, stn.Key("rule1"))
 		default:
 			usage()
 		}
@@ -205,9 +213,10 @@ func main() {
 		usage()
 	}
 }
+
 func usage() {
 	fmt.Println(os.Args[0], ": [etcd-config-file] <command>")
-	fmt.Println("\tcommands: -ct -mt -dt -ce -me -cl -ml -dl -cmm -dmm -cms -dms -cvx -dvx -cr -dr")
+	fmt.Println("\tcommands: -ct -mt -dt -ce -me -cl -ml -dl -cmm -dmm -cms -dms -cvx -dvx -cr -dr -stna -stnd")
 	fmt.Println(os.Args[0], ": [etcd-config-file] -put <etc_key> <json-file>")
 	fmt.Println(os.Args[0], ": [etcd-config-file] -get <etc_key>")
 }
@@ -534,11 +543,15 @@ func create(db keyval.ProtoBroker, ifname string, ipAddr string) {
 	ifs.Interface[0].Name = ifname
 	ifs.Interface[0].Type = interfaces.InterfaceType_TAP_INTERFACE
 	ifs.Interface[0].Enabled = true
-	//ifs.Interface[0].PhysAddress = "06:9e:df:66:54:41"
-	ifs.Interface[0].Enabled = true
-	//ifs.Interface[0].Mtu = 555
-	ifs.Interface[0].IpAddresses = make([]string, 1)
+	ifs.Interface[0].PhysAddress = "06:9e:df:66:54:41"
+	ifs.Interface[0].Mtu = 555
+	ifs.Interface[0].IpAddresses = make([]string, 3)
 	ifs.Interface[0].IpAddresses[0] = ipAddr
+	ifs.Interface[0].IpAddresses[1] = "192.168.2.5/24"
+	ifs.Interface[0].IpAddresses[2] = "10.10.1.7/24"
+	//ifs.Interface[0].Unnumbered = &interfaces.Interfaces_Interface_Unnumbered{}
+	//ifs.Interface[0].Unnumbered.IsUnnumbered = true
+	//ifs.Interface[0].Unnumbered.InterfaceWithIP = "memif"
 	//ifs.Interface[0].IpAddresses[0] = "2002:db8:0:0:0:ff00:42:8329"
 	ifs.Interface[0].Tap = &interfaces.Interfaces_Interface_Tap{HostIfName: ifname}
 
@@ -754,6 +767,32 @@ func createBridgeDomain(db keyval.ProtoBroker, bdName string) {
 
 	log.Println(bd)
 	db.Put(l2.BridgeDomainKey(bd.BridgeDomains[0].Name), bd.BridgeDomains[0])
+}
+
+func addArpEntry(db keyval.ProtoBroker, iface string) {
+	arpTable := l3.ArpTable{}
+	arpTable.ArpTableEntries = make([]*l3.ArpTable_ArpTableEntry, 1)
+	arpTable.ArpTableEntries[0] = new(l3.ArpTable_ArpTableEntry)
+	arpTable.ArpTableEntries[0].Interface = "tap1"
+	arpTable.ArpTableEntries[0].IpAddress = "192.168.10.21"
+	arpTable.ArpTableEntries[0].PhysAddress = "59:6C:45:59:8E:BD"
+	arpTable.ArpTableEntries[0].Static = true
+
+	log.Println(arpTable)
+	db.Put(l3.ArpEntryKey(arpTable.ArpTableEntries[0].Interface, arpTable.ArpTableEntries[0].IpAddress), arpTable.ArpTableEntries[0])
+}
+
+func deleteArpEntry(db keyval.ProtoBroker, iface string) {
+	arpTable := l3.ArpTable{}
+	arpTable.ArpTableEntries = make([]*l3.ArpTable_ArpTableEntry, 1)
+	arpTable.ArpTableEntries[0] = new(l3.ArpTable_ArpTableEntry)
+	arpTable.ArpTableEntries[0].Interface = "tap1"
+	arpTable.ArpTableEntries[0].IpAddress = "192.168.10.21"
+	arpTable.ArpTableEntries[0].PhysAddress = "59:6C:45:59:8E:BD"
+	arpTable.ArpTableEntries[0].Static = true
+
+	log.Println(arpTable)
+	db.Delete(l3.ArpEntryKey(arpTable.ArpTableEntries[0].Interface, arpTable.ArpTableEntries[0].IpAddress))
 }
 
 func addArpTableEntry(db keyval.ProtoBroker, bdName string) {
@@ -1044,4 +1083,16 @@ func disableL4Features(db keyval.ProtoBroker) {
 	log.Println(l4Fatures)
 
 	db.Put(l4.FeatureKey(), l4Fatures)
+}
+
+func createStnRule(db keyval.ProtoBroker, ifName string, ipAddress string) {
+	stnRule := stn.StnRule{
+		RuleName:  "rule1",
+		IpAddress: ipAddress,
+		Interface: ifName,
+	}
+
+	log.Println(stnRule)
+
+	db.Put(stn.Key(stnRule.RuleName), &stnRule)
 }
