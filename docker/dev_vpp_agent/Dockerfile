@@ -67,6 +67,8 @@ RUN ./build-agent.sh ${AGENT_COMMIT}
 
 COPY etcd.conf .
 COPY kafka.conf .
+COPY cert.pem .
+COPY key.pem .
 COPY govpp.conf .
 COPY vpp.conf /etc/vpp/vpp.conf
 COPY supervisord_kill.py /usr/bin/supervisord_kill.py
